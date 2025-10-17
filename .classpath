@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="src" path="config-service/src/main/java"/>
+	<classpathentry kind="src" path="config-service/src/test/java"/>
+	<classpathentry kind="src" path="currency-service/src/main/java"/>
+	<classpathentry kind="src" path="discovery-service/src/main/java"/>
+	<classpathentry kind="src" path="discovery-service/src/test/java"/>
+	<classpathentry kind="src" path="greeting-service/src/main/java"/>
+	<classpathentry kind="src" path="product-service/src/main/java"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>
