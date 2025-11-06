@@ -1,49 +1,103 @@
 package br.edu.atitus.product_service.controllers;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.annotation.Cacheable;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.CacheManager;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort.Direction;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import br.edu.atitus.product_service.clients.CurrencyClient;
+import br.edu.atitus.product_service.clients.CurrencyResponse;
 import br.edu.atitus.product_service.entities.ProductEntity;
-import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import br.edu.atitus.product_service.repositories.ProductRepository;
 
 @RestController
+@RequestMapping("products")
 public class OpenProductController {
 
-    @Autowired
-    private CurrencyClient currencyClient;
+	private final ProductRepository repository;
+	private final CurrencyClient currencyClient;
+	private final CacheManager cacheManager;
 
-    private static final String PRODUCT_CB = "productServiceCB";
+	public OpenProductController(ProductRepository repository, CurrencyClient currencyClient,
+			CacheManager cacheManager) {
+		super();
+		this.repository = repository;
+		this.currencyClient = currencyClient;
+		this.cacheManager = cacheManager;
+	}
 
-    @GetMapping("/product/{id}/{currency}")
-    @Cacheable(value = "productCache", key = "#id + '-' + #currency")
-    @CircuitBreaker(name = PRODUCT_CB, fallbackMethod = "fallbackProduct")
-    public ProductEntity getProduct(@PathVariable Long id, @PathVariable String currency) {
-        ProductEntity product = new ProductEntity();
-        product.setId(id);
-        product.setName("Produto " + id);
-        product.setPrice(100.0);
+	@Value("${server.port}")
+	private int serverPort;
 
-        try {
-            double rate = currencyClient.getCurrency(id.toString(), currency).getConversionRate();
-            product.setConvertedPrice(product.getPrice() * rate);
-        } catch (Exception e) {
-            product.setConvertedPrice(-1);
-        }
-        product.setEnvironment("Product Service OK");
-        return product;
-    }
+	@GetMapping("/{idProduct}/{targetCurrency}")
+	public ResponseEntity<ProductEntity> getProduct(
+			@PathVariable Long idProduct,
+			@PathVariable String targetCurrency
+ 			) throws Exception {
+		
+		targetCurrency = targetCurrency.toUpperCase();
+		String nameCache = "Product";
+		String keycache = idProduct + targetCurrency;
+		
+		ProductEntity product = cacheManager.getCache(nameCache).get(keycache, ProductEntity.class);
+		
+		if (product == null ) {
+			product = repository.findById(idProduct).orElseThrow(() -> new Exception("Product not found"));
 
-    public ProductEntity fallbackProduct(Long id, String currency, Throwable t) {
-        ProductEntity product = new ProductEntity();
-        product.setId(id);
-        product.setName("Produto " + id);
-        product.setPrice(100.0);
-        product.setConvertedPrice(-1);
-        product.setEnvironment("Fallback - Currency Service offline");
-        return product;
-    }
+			product.setEnviroment("Product-service running on port: " + serverPort);
+
+			if (targetCurrency.equalsIgnoreCase(product.getCurrency()))
+				product.setConvertedPrice(product.getPrice());
+			else {
+				CurrencyResponse currency = currencyClient.getCurrency(product.getPrice(), product.getCurrency(),
+						targetCurrency);
+				if (currency != null) {
+					product.setConvertedPrice(currency.getConvertedValue());
+					product.setEnviroment(product.getEnviroment() + " - " + currency.getEnviroment());
+					
+					cacheManager.getCache(nameCache).put(keycache, product);
+				} else {
+					product.setConvertedPrice(-1);
+					product.setEnviroment(product.getEnviroment() + " - Currency Unavailable");
+				}
+			}
+
+		} else {
+			product.setEnviroment("Product-service running on port: " + serverPort + " - DataSource: Cache" );
+		}
+		return ResponseEntity.ok(product);
+	}
+	
+	@GetMapping("/noconverter/{idProduct}")
+	public ResponseEntity<ProductEntity> getNoConverter(@PathVariable Long idProduct) throws Exception{
+		var product = repository.findById(idProduct).orElseThrow(() -> new Exception("produto não encontrado"));
+		product.setConvertedPrice(-1);
+		product.setEnviroment("Product-service running on port: " + serverPort);
+		return ResponseEntity.ok(product);
+	}
+
+	
+	@GetMapping("/{targetCurrency}")
+	public ResponseEntity<Page<ProductEntity>> getAllProducts(@PathVariable String targetCurrency,
+			@PageableDefault(page = 0, size = 5, sort = "description", direction = Direction.ASC) Pageable pageable)
+			throws Exception {
+		Page<ProductEntity> products = repository.findAll(pageable);
+		for (ProductEntity product : products) {
+			CurrencyResponse currency = currencyClient.getCurrency(product.getPrice(), product.getCurrency(),
+					targetCurrency);
+
+			product.setConvertedPrice(currency.getConvertedValue());
+			product.setEnviroment("Product-Service running on port: " + serverPort + " - " + currency.getEnviroment()); 
+																									
+		}
+		return ResponseEntity.ok(products);
+		
+	}
 }
